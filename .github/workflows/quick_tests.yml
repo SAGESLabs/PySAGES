@@ -12,6 +12,21 @@ defaults:
                 working-directory: ./
 
 jobs:
+        style:
+                runs-on: ubuntu-20.04
+                name: "Testing compliance coding styles"
+                steps:
+                       - uses: actions/checkout@v2
+                       - uses: actions/setup-python@v2
+                         with:
+                             python-version: '3.x'
+                       - name: install dependecies
+                         run: |
+                           pip install pylint flake8
+                       - name: test with pylint
+                         run: pylint pysages
+                       - name: test with flake8
+                         run : flake8 pysages
         install:
                 runs-on: ubuntu-20.04
                 name: "Testing installation of pysages"
