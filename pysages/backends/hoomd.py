@@ -8,6 +8,7 @@ import jax
 import pysages.backends.common as common
 
 from functools import partial
+from typing import Callable
 from hoomd.dlext import (
     AccessLocation, AccessMode, HalfStepHook, SystemView,
     net_forces, positions_types, rtags, velocities_masses,
@@ -16,27 +17,28 @@ from jax.dlpack import from_dlpack as asarray
 from pysages.backends.common import HelperMethods
 from pysages.backends.snapshot import Box, Snapshot
 
+from .core import ContextWrapper, Sampler
+from .snapshot import Snapshot
+from typing import Callable
 
-class ContextWrapper:
+
+class ContextWrapperHOOMD(ContextWrapper):
+    """
+    ContextWrapper for hoomd-blue.
+    """
     def __init__(self, context):
+        super().__init__(context)
         self.sysview = SystemView(context.system_definition)
-        self.context = context
         self.synchronize = self.sysview.synchronize
 
 
-class Sampler(HalfStepHook):
-    def __init__(self, method_bundle, bias):
-        super().__init__()
-        #
-        snapshot, initialize, update = method_bundle
-        self.snapshot = snapshot
-        self.state = initialize()
-        self._update = update
-        self.bias = bias
-    #
-    def update(self, timestep):
-        self.state = self._update(self.snapshot, self.state)
-        self.bias(self.snapshot, self.state)
+class SamplerHOOMD(Sampler, HalfStepHook):
+    """
+    Sampler class for hoomd-blue backend.
+    """
+    def __init__(self, method_bundle, bias, callback:Callable):
+        HalfStepHook.__init__()
+        Sampler.__init__(method_bundle, bias, callback)
 
 
 if hasattr(AccessLocation, "OnDevice"):
@@ -124,16 +126,24 @@ def build_helpers(context):
     return HelperMethods(jax.jit(indices), jax.jit(momenta), restore), bias
 
 
-def bind(context, sampling_method, **kwargs):
-    #
+def bind(context, sampling_method, callback: Callable, **kwargs):
+    """
+    Bind pysages to hoomd-blue.
+
+    context -- hoomd simulation context
+    sampling_method -- PySAGES sampling method
+    callback -- callback method with call signature `callback(snapshot, state, timestep)`
+      called after each pysages update. Example: logging of CVs.
+    """
     helpers, bias = build_helpers(context)
-    #
+
     wrapped_context = ContextWrapper(context)
+
     snapshot = take_snapshot(wrapped_context)
     method_bundle = sampling_method(snapshot, helpers)
-    sync_and_bias = partial(bias, sync_backend = wrapped_context.synchronize)
-    #
-    sampler = Sampler(method_bundle, sync_and_bias)
+    sync_and_bias = partial(bias, sync_backend=wrapped_context.synchronize)
+
+    sampler = Sampler(method_bundle, sync_and_bias, callback)
+
     context.integrator.cpp_integrator.setHalfStepHook(sampler)
-    #
     return sampler

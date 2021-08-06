@@ -19,26 +19,28 @@ from openmm_dlext import ContextView, DeviceType, Force
 from pysages.backends.common import HelperMethods
 from pysages.backends.snapshot import Box, Snapshot
 
+from .core import ContextWrapper, Sampler
+from typing import Callable
 
-class ContextWrapper:
+
+class ContextWrapperOpenMM(ContextWrapper):
+    """
+    OpenMM derivative of the ContextWrapper class.
+
+    context -- as used in base class
+    force -- `openmm_dlext` force class that is being wrapped
+    """
     def __init__(self, context, force):
+        super().__init__(context)
         self.view = force.view(context)
-        self.context = context
         self.synchronize = self.view.synchronize
 
 
-class Sampler:
-    def __init__(self, method_bundle, bias):
-        snapshot, initialize, update = method_bundle
-        self.snapshot = snapshot
-        self.state = initialize()
-        self.update_from = update
-        self.bias = bias
-    #
-    def update(self):
-        self.state = self.update_from(self.snapshot, self.state)
-        self.bias(self.snapshot, self.state)
-
+class SamplerOpenMM(Sampler):
+    """
+    Sampler class for OpenMM
+    """
+    pass
 
 def is_on_gpu(view: ContextView):
     return view.device_type() == DeviceType.GPU
@@ -176,17 +178,26 @@ def check_integrator(context):
         raise ValueError("Variable step size integrators are not supported")
 
 
-def bind(context, sampling_method, force = Force(), **kwargs):
+def bind(context, sampling_method, callback: Callable, force=Force(), **kwargs):
+    """
+    Bind OpenMM as a backend to PySAGES.
+
+    context -- OpenMM context
+    sampling_method -- PySAGES sampling method
+    callback -- callback method with call signature `callback(snapshot, state, timestep)`
+      called after each pysages update. Example: logging of CVs.
+    """
     check_integrator(context)
-    #
+
     force.add_to(context)
+
     wrapped_context = ContextWrapper(context, force)
     helpers, bias = build_helpers(wrapped_context.view)
     snapshot = take_snapshot(wrapped_context)
     method_bundle = sampling_method(snapshot, helpers)
-    sync_and_bias = partial(bias, sync_backend = wrapped_context.synchronize)
-    #
-    sampler = Sampler(method_bundle, sync_and_bias)
+    sync_and_bias = partial(bias, sync_backend=wrapped_context.synchronize)
+
+    sampler = SamplerOpenMM(method_bundle, sync_and_bias, callback)
+
     force.set_callback_in(context, sampler.update)
-    #
     return sampler
