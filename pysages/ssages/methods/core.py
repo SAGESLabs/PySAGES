@@ -3,7 +3,6 @@
 # See LICENSE.md and CONTRIBUTORS.md at https://github.com/SSAGESLabs/PySAGES
 
 from abc import ABC, abstractmethod
-
 from jax import jit
 from pysages.ssages.collective_variables.core import build
 
@@ -11,6 +10,7 @@ from pysages.ssages.collective_variables.core import build
 # ================ #
 #   Base Classes   #
 # ================ #
+
 class SamplingMethod(ABC):
     def __init__(self, cvs, *args, **kwargs):
         self.cv = build(*cvs)
