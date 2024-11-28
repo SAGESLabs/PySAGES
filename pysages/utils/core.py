@@ -1,21 +1,46 @@
 # SPDX-License-Identifier: MIT
 # See LICENSE.md and CONTRIBUTORS.md at https://github.com/SSAGESLabs/PySAGES
 
+import re
 from copy import deepcopy
+from pathlib import Path
 
 import numpy
 from jax import numpy as np
 from plum import Dispatcher
 
-from pysages.typing import JaxArray, Scalar
+from pysages.typing import JaxArray, Scalar, Union
 from pysages.utils.compat import solve_pos_def
 
 # PySAGES main dispatcher
 dispatch = Dispatcher()
 
 
+class PatternMatcher:
+    def __init__(self, pattern: str):
+        self.pattern = re.compile(pattern)
+
+    def __call__(self, text):
+        return first_match(self.pattern, text)
+
+
 class ToCPU:
     pass
+
+
+@dispatch
+def contains(s: str, pattern: re.Pattern):
+    return bool(pattern.search(s))
+
+
+@dispatch
+def contains(s: str, pattern: str):
+    return bool(re.search(pattern, s))
+
+
+@dispatch
+def contains(_s: type(None), _pattern):
+    return False
 
 
 @dispatch
@@ -47,12 +72,50 @@ def identity(x):
     return x
 
 
+@dispatch
+def is_file(path: Path):
+    return path.is_file()
+
+
+@dispatch
+def is_file(path: str):
+    return is_file(Path(path))
+
+
 def first_or_all(seq):
     """
     Returns the only element of a sequence `seq` if its length is one,
     otherwise returns `seq` itself.
     """
     return seq[0] if len(seq) == 1 else seq
+
+
+@dispatch
+def first_match(pattern: re.Pattern, s: str):
+    return pattern.search(s).group(1)
+
+
+@dispatch
+def first_match(pattern: str, s: str):
+    return re.search(pattern, s).group(1)
+
+
+@dispatch
+def last(iterable, default_value=None):
+    elem = default_value
+    for elem in iterable:
+        pass
+    return elem
+
+
+@dispatch
+def last(a: Union[tuple, JaxArray]):
+    return a[-1]
+
+
+def parse_array(s, shape: tuple = (-1, 3), transpose: bool = False):
+    a = np.fromstring(s, sep=" ").reshape(shape)
+    return a.T if transpose else a
 
 
 def eps(T: type = np.zeros(0).dtype):

@@ -20,13 +20,19 @@ from .compat import (
     unsafe_buffer_pointer,
 )
 from .core import (
+    PatternMatcher,
     ToCPU,
+    contains,
     copy,
     dispatch,
     eps,
+    first_match,
     first_or_all,
     gaussian,
     identity,
+    is_file,
+    last,
     linear_solver,
+    parse_array,
 )
 from .transformations import quaternion_from_euler, quaternion_matrix
