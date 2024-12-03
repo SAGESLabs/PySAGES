@@ -15,8 +15,8 @@ from pysages.backends.snapshot import (
     SnapshotMethods,
     build_data_querier,
 )
-from pysages.backends.utils import view
-from pysages.typing import Callable, NamedTuple
+from pysages.backends.utils import View, view
+from pysages.typing import Callable
 from pysages.utils import ToCPU, copy
 
 
@@ -151,10 +151,6 @@ def build_helpers(context, sampling_method):
     return helpers
 
 
-class View(NamedTuple):
-    synchronize: Callable
-
-
 def bind(sampling_context: SamplingContext, callback: Callable, **kwargs):
     """
     Entry point for the backend code, it gets called when the simulation
@@ -166,6 +162,6 @@ def bind(sampling_context: SamplingContext, callback: Callable, **kwargs):
     helpers = build_helpers(sampling_context, sampling_method)
     method_bundle = sampling_method.build(snapshot, helpers)
     sampler = Sampler(context, method_bundle, callback)
-    sampling_context.view = View((lambda: None))
+    sampling_context.view = View()
     sampling_context.run = context.run
     return sampler
