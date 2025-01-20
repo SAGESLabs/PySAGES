@@ -6,12 +6,18 @@ This module defines "Context" classes for backends that do not provide a dedicat
 class to hold the simulation data.
 """
 
+import weakref
+from dataclasses import dataclass
 from importlib import import_module
+from pathlib import Path
+from xml.etree import ElementTree as et
 
-from pysages.typing import Any, Callable, JaxArray, NamedTuple, Optional
-from pysages.utils import is_file
+from pysages.typing import Any, Callable, JaxArray, NamedTuple, Optional, Union
+from pysages.utils import dispatch, is_file
 
 JaxMDState = Any
+QboxInstance = Any
+XMLElement = et.Element
 
 
 class JaxMDContextState(NamedTuple):
@@ -63,44 +69,95 @@ class JaxMDContext(NamedTuple):
     dt: float
 
 
+@dataclass(frozen=True)
 class QboxContextGenerator:
     """
     Provides an interface for setting up Qbox-backed simulations.
 
     Arguments
     ---------
+
     launch_command: str
         Specifies the command that will be used to run Qbox in interactive mode,
         e.g. `qb` or `mpirun -n 4 qb`.
 
-    input_script: str
-        Path to the Qbox input script.
+    script: str
+        File or multile string with the Qbox input script.
 
-    output_filename: Union[Path, str]
+    nitscf: int
+        Same as Qbox's `run` command parameter. The maximum number of self-consistent
+        iterations.
+
+    niter: int
+        Same as Qbox's `run` command parameter. The number of steps during which atomic
+        positions are updated. Defaults to 1.
+
+    logfile: Union[Path, str]
         Name for the output file. It must not exist on the working directory.
         Defaults to `qb.r`.
     """
 
-    def __init__(self, launch_command, input_script, output_filename="qb.r"):
-        self.cmd = launch_command
-        self.script = input_script
-        self.logfile = output_filename
+    launch_command: str
+    script: str
+    nitscf: int  # NOTE: Should `nitscf` have a default value here?
+    niter: int = 1
+    logfile: Union[Path, str] = Path("qb.r")
 
     def __call__(self, **kwargs):
-        if not is_file(self.script):
-            raise FileNotFoundError(f"Unable to find or open {self.script}")
-
         if is_file(self.logfile):
-            msg = f"Delete {self.logfile} or choose a different output file name"
+            msg = f"Delete {self.logfile} or choose a different log file name"
             raise FileExistsError(msg)
 
-        pexpect = import_module("pexpect")
+        return QboxContext(self.launch_command, self.script, self.logfile, self.niter, self.nitscf)
 
-        qb = pexpect.spawn(self.cmd)
-        qb.logfile_read = open(self.logfile, "wb")
+
+@dataclass(frozen=True)
+class QboxContext:
+    instance: QboxInstance
+    niter: int
+    nitscf: int
+    initial_state: XMLElement
+    state: XMLElement
+
+    @dispatch
+    def __init__(
+        self, launch_cmd: str, script: str, logfile: Union[Path, str], niter: int, nitscf: int
+    ):
+        pexpect = import_module("pexpect.popen_spawn")
+
+        def finalize(qb):
+            if not qb.flag_eof:
+                qb.sendline("quit")
+                qb.expect(pexpect.EOF)
+
+        qb = pexpect.PopenSpawn(launch_cmd)
+        weakref.finalize(qb, lambda: finalize(qb))
+        qb.logfile_read = open(logfile, "wb")
         qb.expect(r"\[qbox\] ")
 
-        qb.sendline(self.script)
-        qb.expect(r"\[qbox\] ")
+        super().__setattr__("instance", qb)
+        super().__setattr__("niter", niter)
+        super().__setattr__("nitscf", nitscf)
 
-        return qb
+        initial_state = qb.before
+        state = self.process_input(script)  # sets `self.state`
+
+        if self.state.find("error") is not None:
+            try:
+                qb.expect(pexpect.EOF, timeout=3)
+            finally:
+                raise ChildProcessError("Qbox encountered the following error:\n" + state.decode())
+
+        initial_state += state + b"\n</fpmd:simulation>"
+        super().__setattr__("initial_state", et.fromstring(initial_state))
+
+    def process_input(self, entry: str, target=r"\[qbox\] "):
+        qb = self.instance
+        state = b""
+        for cmd in entry.splitlines():
+            qb.sendline(cmd)
+            qb.expect(target)
+            state += qb.before
+        # We add tags to ensure that the state corresponds to a valid xml section
+        super().__setattr__("state", et.fromstring(b"<root>\n" + state + b"\n</root>"))
+        return state
